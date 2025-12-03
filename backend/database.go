@@ -22,7 +22,9 @@ func initDB() {
 	"id" integer NOT NULL PRIMARY KEY AUTOINCREMENT,
 	"name" TEXT,
 	"email" TEXT UNIQUE,
-	"preferences" TEXT
+	"preferences" TEXT,
+	"token" TEXT UNIQUE,
+	"target_id" INTEGER
 	);`
 
 	log.Println("Inicjalizacja bazy danych...")

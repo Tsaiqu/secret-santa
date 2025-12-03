@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -8,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // --- HANDLERY ---
@@ -30,8 +33,10 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 3. Zapis do bazy
+	token := uuid.New().String()
+
 	// `prepare` dla bezpieczeństwa
-	stmt, err := db.Prepare("INSERT INTO participants(name, email, preferences) VALUES(?, ?, ?)")
+	stmt, err := db.Prepare("INSERT INTO participants(name, email, preferences, token) VALUES(?, ?, ?, ?)")
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Błąd bazy danych")
 		log.Println("Prepare error: ", err)
@@ -39,7 +44,7 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 	}
 	defer stmt.Close()
 
-	_, err = stmt.Exec(req.Name, req.Email, req.Preferences)
+	_, err = stmt.Exec(req.Name, req.Email, req.Preferences, token)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constrint failed: participants.email") {
 			respondError(w, http.StatusConflict, "Ten adres email jest już zapisany")
@@ -49,8 +54,11 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("Nowy uczestnik zapisany: %s (%s)\n", req.Name, req.Email)
-	respondJSON(w, http.StatusCreated, map[string]string{"message": "Zapisano pomyślnie"})
+	log.Printf("Nowy uczestnik zapisany: %s (%s)\nToken: %s", req.Name, req.Email, token)
+	respondJSON(w, http.StatusCreated, map[string]string{
+		"message": "Zapisano! Sprawdź maila po link",
+		"token":   token,
+	})
 }
 
 func handleListParticipants(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +84,7 @@ func handleListParticipants(w http.ResponseWriter, r *http.Request) {
 }
 
 // TODO: dodać weryfikację hasła admina
+// TODO: update początku funkcji (wczytyawania z bazy) - nowy model danych w DB
 func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	// 1. Pobierz wszystkich uczestników z bazy
 	// (Używamy tej samej logiki co w handleListParticipants, ale wewnętrznie)
@@ -91,6 +100,7 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 		Name        string
 		Email       string
 		Preferences string
+		ID          int
 	}
 	var givers []Giver
 	for rows.Next() {
@@ -108,7 +118,6 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	log.Println("Rozpoczynam losowanie dla ", count, " osób...")
 
 	// 2. Algorytm losowania
-
 	rand.Seed(time.Now().UnixNano())
 
 	rand.Shuffle(count, func(i, j int) {
@@ -138,6 +147,78 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respondJSON(w, http.StatusOK, map[string]string{"message": responseMsg})
+
+	// --- ZAPISYWANIE DO BAZY ---
+
+	// Rozpoczynamy transakcję SQL (żeby zapisać wszystko albo nic xd)
+	tx, err := db.Begin()
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Błąd transakcji")
+		return
+	}
+
+	for i := 0; i < count; i++ {
+		giver := givers[i] // Uwaga: musisz pobierać z bazy pełne obiekty Participant (z ID!), nie uproszczone
+		receiver := givers[(i+1)%count]
+
+		// 1. Zapisz w bazie, że Giver wylosował Receivera
+		_, err := tx.Exec("UPDATE participants SET target_id = ? WHERE id = ?", receiver.ID, giver.ID)
+		if err != nil {
+			tx.Rollback()
+			log.Println("Błąd zapisu pary: ", err)
+			respondError(w, http.StatusInternalServerError, "Błąd zapisu losowania")
+			return
+		}
+
+		// 2. Wyślij maila (tutal dodaj link do dashboardu z tokenem!)
+		// link := fmt.Sprintf("http://secret-santa.pl/status?token=%s", giver.Token)
+		// sendSecretSantaEmail(...)
+	}
+
+	tx.Commit()
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Losowanie zapisane i maile wysłane."})
+}
+
+// Sprawdzanie statusu (Logowanie magicznym linkiem)
+// GET /api/my-status?token=xyz
+func handleMyStatus(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		respondError(w, http.StatusUnauthorized, "Brak tokenu")
+		return
+	}
+
+	var me Participant
+	var targetID sql.NullInt64 // Używamy NullInt64 bo może być NULL przed losowaniem
+
+	// 1. Znajdź mnie po tokenie
+	err := db.QueryRow("SELECT id, name, email, preferences, target_id FROM participants WHERE token = ?", token).Scan(&me.ID, &me.Name, &me.Email, &me.Preferences, &targetID)
+
+	if err == sql.ErrNoRows {
+		respondError(w, http.StatusUnauthorized, "Nieprawidłowy token")
+		return
+	} else if err != nil {
+		respondError(w, http.StatusInternalServerError, "Błąd bazy")
+		return
+	}
+
+	response := MyStatusResponse{
+		Me:         me,
+		IsDrawDone: false,
+	}
+
+	// 2. Jeśli mam przypisaną osobę (target_id nie jest null), pobierz jej dane
+	if targetID.Valid {
+		response.IsDrawDone = true
+		var targetName, targetPrefs string
+		err := db.QueryRow("SELECT name, preferences FROM participants WHERE id = ?", targetID.Int64).Scan(&targetName, &targetPrefs)
+		if err == nil {
+			response.TargetName = targetName
+			response.TargetPrefs = targetPrefs
+		}
+	}
+
+	respondJSON(w, http.StatusOK, response)
 }
 
 // --- FUNCKJĘ POMOCNICZE DO ODPOWIEDZI HTTP ---
