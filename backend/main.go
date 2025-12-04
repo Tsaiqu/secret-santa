@@ -1,13 +1,22 @@
 package main
 
 import (
+	"embed"
 	"log"
 	"net/http"
 
 	"github.com/joho/godotenv"
 )
 
+// Here's all the MAGIC
+// Ta linijka mówi kompilatorowi Go:
+// "Weź cały folder 'build' i wpakuj go do środka pliku '.exe' jako zmienną"
+//
+// go:embed build/*
+var frontendFiles embed.FS
+
 func main() {
+	// 1. Ładowanie .env
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Ostrzeżenie: Nie znaleziono pliku .env, szukam w zmiennych systemowych.")
@@ -21,14 +30,11 @@ func main() {
 
 	// --- ENDPOINTY API ---
 
+	// 2. API
 	mux.HandleFunc("POST /api/signup", handleSignup)
-
 	mux.HandleFunc("GET /api/admin/participants", handleListParticipants)
-
 	mux.HandleFunc("POST /api/admin/draw", handleDrawAndSend)
-
 	mux.HandleFunc("GET /api/my-status", handleMyStatus)
-
 	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Dzień dobry, tu serwerek :)"))
 	})
