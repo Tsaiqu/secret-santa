@@ -88,7 +88,7 @@ func handleListParticipants(w http.ResponseWriter, r *http.Request) {
 func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	// 1. Pobierz wszystkich uczestników z bazy
 	// (Używamy tej samej logiki co w handleListParticipants, ale wewnętrznie)
-	rows, err := db.Query("SELECT name, email, preferences FROM participants")
+	rows, err := db.Query("SELECT id, name, email, preferences FROM participants")
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Błąd bazy danych przed losowaniem")
 		return
@@ -105,7 +105,10 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	var givers []Giver
 	for rows.Next() {
 		var g Giver
-		rows.Scan(&g.Name, &g.Email, &g.Preferences)
+		if err := rows.Scan(&g.ID, &g.Name, &g.Email, &g.Preferences); err != nil {
+			log.Println("Row scan error: ", err)
+			continue
+		}
 		givers = append(givers, g)
 	}
 
@@ -123,30 +126,6 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 	rand.Shuffle(count, func(i, j int) {
 		givers[i], givers[j] = givers[j], givers[i]
 	})
-
-	emailErrors := 0
-
-	for i := 0; i < count; i++ {
-		giver := givers[i]
-		receiver := givers[(i+1)%count]
-
-		fmt.Printf("[LOSOWANIE] %s kupuje prezent dla -> %s\n", giver.Name, receiver.Name)
-
-		// 3. Wysyłka maila (placeholder)
-		// Tutaj wywołamy funkcję z pliku mailer.go, na razie symulujemy
-		err := sendSecretSantaEmail(giver.Email, giver.Name, receiver.Name, receiver.Preferences)
-		if err != nil {
-			log.Printf("Błąd wysyłki do %s: %v \n", giver.Email, err)
-			emailErrors++
-		}
-	}
-
-	responseMsg := fmt.Sprintf("Losowanie zakończone. Wysłano %d maili.", count-emailErrors)
-	if emailErrors > 0 {
-		responseMsg += fmt.Sprintf(" Uwaga: %d maili nie dotarło (sprawdź logi).", emailErrors)
-	}
-
-	respondJSON(w, http.StatusOK, map[string]string{"message": responseMsg})
 
 	// --- ZAPISYWANIE DO BAZY ---
 
@@ -169,14 +148,36 @@ func handleDrawAndSend(w http.ResponseWriter, r *http.Request) {
 			respondError(w, http.StatusInternalServerError, "Błąd zapisu losowania")
 			return
 		}
-
-		// 2. Wyślij maila (tutal dodaj link do dashboardu z tokenem!)
-		// link := fmt.Sprintf("http://secret-santa.pl/status?token=%s", giver.Token)
-		// sendSecretSantaEmail(...)
 	}
 
-	tx.Commit()
-	respondJSON(w, http.StatusOK, map[string]string{"message": "Losowanie zapisane i maile wysłane."})
+	if err := tx.Commit(); err != nil {
+		respondError(w, http.StatusInternalServerError, "Błąd zatwierdzania transakcji")
+		return
+	}
+
+	// 3. Wysyłka maila
+	emailErrors := 0
+	for i := 0; i < count; i++ {
+		giver := givers[i]
+		receiver := givers[(i+1)%count]
+
+		fmt.Printf("[LOSOWANIE] %s kupuje prezent dla -> %s\n", giver.Name, receiver.Name)
+
+		// 3. Wysyłka maila (placeholder)
+		// Tutaj wywołamy funkcję z pliku mailer.go, na razie symulujemy
+		err := sendSecretSantaEmail(giver.Email, giver.Name, receiver.Name, receiver.Preferences)
+		if err != nil {
+			log.Printf("Błąd wysyłki do %s: %v \n", giver.Email, err)
+			emailErrors++
+		}
+	}
+
+	responseMsg := fmt.Sprintf("Losowanie zakończone. Wysłano %d maili.", count-emailErrors)
+	if emailErrors > 0 {
+		responseMsg += fmt.Sprintf(" Uwaga: %d maili nie dotarło (sprawdź logi).", emailErrors)
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": responseMsg})
 }
 
 // Sprawdzanie statusu (Logowanie magicznym linkiem)
