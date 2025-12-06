@@ -35,6 +35,7 @@ func main() {
 	mux.HandleFunc("GET /api/admin/participants", handleListParticipants)
 	mux.HandleFunc("POST /api/admin/draw", handleDrawAndSend)
 	mux.HandleFunc("GET /api/my-status", handleMyStatus)
+	mux.HandleFunc("POST /api/update-preferences", handleUpdatePreferences)
 	mux.HandleFunc("GET /api", func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Dzień dobry, tu serwerek :)"))
 	})
