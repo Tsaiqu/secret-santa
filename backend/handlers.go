@@ -222,6 +222,44 @@ func handleMyStatus(w http.ResponseWriter, r *http.Request) {
 	respondJSON(w, http.StatusOK, response)
 }
 
+func handleUpdatePreferences(w http.ResponseWriter, r *http.Request) {
+	token := r.URL.Query().Get("token")
+	if token == "" {
+		respondError(w, http.StatusUnauthorized, "Brak tokenu")
+		return
+	}
+
+	var req struct {
+		Preferences string `json:"preferences"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, "Nieprawidłowy JSON")
+		return
+	}
+	defer r.Body.Close()
+
+	if strings.TrimSpace(req.Preferences) == "" {
+		respondError(w, http.StatusBadRequest, "Preferencje nie mogą być puste")
+		return
+	}
+
+	// Sprawdź czy token istnieje i zaktualizuj
+	res, err := db.Exec("UPDATE participants SET preferences = ? WHERE token = ?", req.Preferences, token)
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, "Błąd bazy danych")
+		return
+	}
+
+	rowsAffected, _ := res.RowsAffected()
+	if rowsAffected == 0 {
+		respondError(w, http.StatusUnauthorized, "Nieprawidłowy token")
+		return
+	}
+
+	respondJSON(w, http.StatusOK, map[string]string{"message": "Preferencje zaktualizowane!"})
+}
+
 // --- FUNCKJĘ POMOCNICZE DO ODPOWIEDZI HTTP ---
 
 func respondJSON(w http.ResponseWriter, status int, payload interface{}) {
