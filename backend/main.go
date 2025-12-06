@@ -2,6 +2,7 @@ package main
 
 import (
 	"embed"
+	"io/fs"
 	"log"
 	"net/http"
 
@@ -40,9 +41,44 @@ func main() {
 		w.Write([]byte("Dzień dobry, tu serwerek :)"))
 	})
 
+	// --- 3. Serwowanie frontendu ---
+	frontendFS, err := fs.Sub(frontendFiles, "build")
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Tworzymy handler plików
+	fileServer := http.FileServer(http.FS(frontendFS))
+
+	// Obsługa wszystkich innych ścieżek ("/")
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		// Sprawdzić czy API nie zostało wywołane przez pomyłke tutaj
+		// (opcjonalnie, ale dobra praktyka)
+
+		// Trich dla SPA (Single Page Application):
+		// Jeśli użytkownik wejdzie na "/admin" albo "/status",
+		// fizycznie takiego pliku nie ma na serwerze.
+		// Musimy wtedy zaserwoawć "index.html", a Svelte w przeglądarce
+		// zzobaczy URL i wyświetli odpowiedni widok.
+
+		path := r.URL.Path
+		// Sprawdź czy plik istnieje w naszym wirtualnym systemie plików
+		_, err := frontendFS.Open(path[1:]) // usuwamy pierwszy slash
+
+		if err != nil {
+			// Jeśli plik nie istnieje (np. /admin), serwujemy index.html
+			// To pozwala działać routingowi Svelte
+			r.URL.Path = "/"
+		}
+
+		fileServer.ServeHTTP(w, r)
+	})
+
+	// Konfiguracja CORS
+	// Na razie zostawiamy
 	corsHandler := enableCORS(mux)
 
-	log.Println("Serwer Mikołaja startuje na porcie :8080...")
+	log.Println("🎅 Serwer Mikołaja (full stack) startuje na porcie :8080...")
 	log.Fatal(http.ListenAndServe(":8080", corsHandler))
 }
 
