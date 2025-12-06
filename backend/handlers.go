@@ -257,6 +257,24 @@ func handleUpdatePreferences(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Sprawdź czy ktoś mnie wylosował i wyślij powiadomeinie
+	var myName string
+	var myID int
+	err = db.QueryRow("SELECT id, name FROM participants WHERE token = ?", token).Scan(&myID, &myName)
+	if err == nil {
+		// Szukamy Mikołaja (osoby, która ma target_id = myID)
+		var giverEmail, giverName string
+		err = db.QueryRow("SELECT email, name FROM participants WHERE target_id = ?", myID).Scan(&giverEmail, &giverName)
+		if err == nil {
+			// Mamy Mikołaja, wysyłamy powiadomienie
+			go func() {
+				if err := sendPreferencesUpdateEmail(giverEmail, giverName, myName, req.Preferences); err != nil {
+					log.Printf("Błąd wysyłki powiadomienia o aktualizacji preferencji do %s: %v\n", giverEmail, err)
+				}
+			}()
+		}
+	}
+
 	respondJSON(w, http.StatusOK, map[string]string{"message": "Preferencje zaktualizowane!"})
 }
 

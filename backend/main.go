@@ -12,7 +12,7 @@ import (
 // Ta linijka mówi kompilatorowi Go:
 // "Weź cały folder 'build' i wpakuj go do środka pliku '.exe' jako zmienną"
 //
-// go:embed build/*
+//go:embed build/*
 var frontendFiles embed.FS
 
 func main() {
