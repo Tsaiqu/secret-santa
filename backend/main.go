@@ -5,6 +5,8 @@ import (
 	"io/fs"
 	"log"
 	"net/http"
+	"os"
+	"strings"
 
 	"github.com/joho/godotenv"
 )
@@ -21,6 +23,10 @@ func main() {
 	err := godotenv.Load()
 	if err != nil {
 		log.Println("Ostrzeżenie: Nie znaleziono pliku .env, szukam w zmiennych systemowych.")
+	}
+
+	if os.Getenv("ADMIN_PASSWORD") == "" {
+		log.Fatal("BŁĄD: Zmienna środowiskowa ADMIN_PASSWORD nie jest ustawiona. Serwer nie może wystartować.")
 	}
 
 	// Inicjalizacja bazy
@@ -76,10 +82,29 @@ func main() {
 
 	// Konfiguracja CORS
 	// Na razie zostawiamy
-	corsHandler := enableCORS(mux)
+	corsHandler := enableCORS(basicAuthMiddleware(mux))
 
 	log.Println("🎅 Serwer Mikołaja (full stack) startuje na porcie :8080...")
 	log.Fatal(http.ListenAndServe(":8080", corsHandler))
+}
+
+func basicAuthMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Sprawdź, czy ścieżka wymaga autoryzacji
+		// Chronimy endpointy API oraz widok panelu admina
+		if strings.HasPrefix(r.URL.Path, "/admin") || strings.HasPrefix(r.URL.Path, "/api/admin") {
+			user, pass, ok := r.BasicAuth()
+
+			adminPassword := os.Getenv("ADMIN_PASSWORD")
+			if !ok || user != "admin" || pass != adminPassword {
+				w.Header().Set("WWW-Authenticate", `Basic realm="Restricted"`)
+				http.Error(w, "Unauthorized", http.StatusUnauthorized)
+				return
+			}
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 func enableCORS(next http.Handler) http.Handler {
