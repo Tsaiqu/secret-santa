@@ -62,7 +62,7 @@ func handleSignup(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleListParticipants(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, name, email. preferences FROM participants ORDER BY id DESC")
+	rows, err := db.Query("SELECT id, name, email, preferences FROM participants ORDER BY id DESC")
 	if err != nil {
 		respondError(w, http.StatusInternalServerError, "Błąd podczas pobierania danych")
 		log.Println("Query error: ", err)
